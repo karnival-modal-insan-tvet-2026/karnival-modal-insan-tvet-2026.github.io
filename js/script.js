@@ -45,7 +45,13 @@ const MASA = {
    tamat: null = kekal selepas itu. pautan: pilihan. */
 const HEBAHAN = [
     {
-        mula: "2026-10-23T08:00:00+08:00", tamat: "2026-10-24T10:00:00+08:00",
+        mula: "2026-10-23T11:00:00+08:00", tamat: "2026-10-23T13:00:00+08:00",
+        ikon: "fa-mosque", tajuk: "Makluman Solat Jumaat",
+        teks: "Solat Jumaat boleh dilaksanakan di Masjid Tepian Putra Kuantan, bersebelahan Kombes. Solat bermula jam 12.55 tengah hari. Semua peserta dan pegawai (lelaki) dijemput menunaikan solat Jumaat secara berjemaah. Waktu rehat solat Jumaat: 1.00 – 2.00 petang.",
+        pautan: { teks: "Lihat Lokasi", href: "https://www.google.com/maps/search/?api=1&query=Masjid+Tepian+Putra+Kuantan" }
+    },
+    {
+        mula: "2026-10-23T11:30:00+08:00", tamat: "2026-10-24T10:00:00+08:00",
         jenis: "keputusan",
         ikon: "fa-trophy", tajuk: "Keputusan Akhir Acara",
         teks: "Hanya kedudukan Johan, Naib Johan, Tempat Ketiga dan Tempat Keempat dihebahkan di sini. Bagi masa dan padanan perlawanan, sila rujuk Jadual.",
@@ -306,56 +312,147 @@ function urai(csv) {
 
 function daripadaSheet(csv) {
     const b = urai(csv);
-    if (!b.length) return null;
-    const h = b[0].map(function (x) { return x.trim().toLowerCase(); });
-    const cari = function (kata) { return h.findIndex(function (x) { return x.indexOf(kata) !== -1; }); };
-    const iA = cari("acara"), iJ = h.findIndex(function (x) { return x === "johan"; }),
-          iN = cari("naib"), iK3 = cari("ketiga"), iK4 = cari("keempat");
+    // cari baris tajuk (boleh bukan baris pertama): mesti ada "acara" dan "johan" tepat
+    let hb = -1, h = [];
+    for (let i = 0; i < Math.min(b.length, 15); i++) {
+        const t = b[i].map(function (x) { return x.trim().toLowerCase(); });
+        if (t.indexOf("acara") !== -1 && t.indexOf("johan") !== -1) { hb = i; h = t; break; }
+    }
     // jika tab "Hebahan" belum wujud, Google memulangkan tab pertama: tolak
-    if (iA < 0 || iJ < 0 || iN < 0) return null;
+    if (hb < 0) return null;
+    const cari = function (fn) { return h.findIndex(fn); };
+    const iA = h.indexOf("acara"), iJ = h.indexOf("johan");
+    const iN  = cari(function (x) { return x.indexOf("naib") !== -1 || /^n\.?\s*johan/.test(x); });
+    const iK3 = cari(function (x) { return x.indexOf("ketiga") !== -1; });
+    const iK4 = cari(function (x) { return x.indexOf("keempat") !== -1 || x.indexOf("kempat") !== -1; });
+    if (iN < 0) return null;
+    const ambil = function (r, i) { return i >= 0 ? (r[i] || "").trim() : ""; };
     const isi = [];
-    b.slice(1).forEach(function (r) {
+    for (let k = hb + 1; k < b.length; k++) {
+        const r = b[k];
         const a = (r[iA] || "").trim();
-        if (!a) return;
-        const o = { acara: a, johan: (r[iJ] || "").trim(), naib: (r[iN] || "").trim(),
-                    ketiga: iK3 >= 0 ? (r[iK3] || "").trim() : "", keempat: iK4 >= 0 ? (r[iK4] || "").trim() : "" };
-        if (o.johan || o.naib || o.ketiga || o.keempat) isi.push(o);
+        if (!a) break; // jadual tamat pada baris kosong pertama
+        isi.push({ acara: a, johan: ambil(r, iJ), naib: ambil(r, iN), ketiga: ambil(r, iK3), keempat: ambil(r, iK4) });
+    }
+    return isi; // termasuk acara yang belum ada keputusan
+}
+
+/* Paparan berputar: satu acara pada satu masa, 10 saat setiap satu, urutan rawak */
+const KEP_MS = 10000;
+let kepTimer = null, kepGilir = [], kepKini = null, kepSlaid = [], kepMasa = 0;
+
+function senaraiMalay(arr) {
+    if (arr.length <= 1) return arr.join("");
+    return arr.slice(0, -1).join(", ") + " dan " + arr[arr.length - 1];
+}
+function kocok(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+}
+
+function lukisSlaid(s) {
+    const kad = document.createElement("div");
+    kad.className = "kep-kad kep-slaid";
+    const t = document.createElement("h4");
+    if (s.info) {
+        kad.classList.add("kep-info");
+        t.textContent = "Acara Masih Berlangsung";
+        const p = document.createElement("p");
+        p.textContent = "Keputusan rasmi bagi " + senaraiMalay(s.nama) +
+            " belum dikeluarkan. Permainan masih berlangsung, harap bersabar. Rujuk Live Score untuk makluman terkini.";
+        kad.appendChild(t); kad.appendChild(p);
+        return kad;
+    }
+    t.textContent = s.d.acara;
+    kad.appendChild(t);
+    [["johan", "Johan"], ["naib", "Naib Johan"], ["ketiga", "Tempat Ketiga"], ["keempat", "Tempat Keempat"]].forEach(function (l, i) {
+        if (!s.d[l[0]]) return;
+        const b = document.createElement("div");
+        b.className = "kep-baris kep-" + (i + 1);
+        const no = document.createElement("span");
+        no.className = "kep-no"; no.textContent = String(i + 1);
+        const lb = document.createElement("span");
+        lb.className = "kep-label"; lb.textContent = l[1];
+        const nm = document.createElement("strong");
+        s.d[l[0]].split(" | ").forEach(function (bhg) {
+            const x = document.createElement("span");
+            x.className = "kep-nama"; x.textContent = bhg;
+            nm.appendChild(x);
+        });
+        b.appendChild(no); b.appendChild(lb); b.appendChild(nm);
+        kad.appendChild(b);
     });
-    return isi;
+    return kad;
+}
+
+function tunjukSlaid(s, animasi, telahLalu) {
+    bekasKeputusan.textContent = "";
+    const k = lukisSlaid(s);
+    if (!animasi) k.classList.add("kep-tanpa-anim");
+    bekasKeputusan.appendChild(k);
+    if (kepSlaid.length > 1) {
+        const bar = document.createElement("div");
+        bar.className = "kep-bar";
+        const isiBar = document.createElement("span");
+        isiBar.style.animationDuration = KEP_MS + "ms";
+        if (telahLalu) isiBar.style.animationDelay = "-" + telahLalu + "ms";
+        bar.appendChild(isiBar);
+        bekasKeputusan.appendChild(bar);
+    }
+    kepKini = s.kunci;
+    if (!telahLalu) kepMasa = Date.now();
+}
+
+function kepLangkah() {
+    kepTimer = null;
+    if (!bekasKeputusan || !document.body.contains(bekasKeputusan) || kepSlaid.length < 2) return;
+    if (!kepGilir.length) {
+        kepGilir = kocok(kepSlaid.slice());
+        if (kepGilir[kepGilir.length - 1].kunci === kepKini) kepGilir.unshift(kepGilir.pop()); // elak ulang serta-merta
+    }
+    tunjukSlaid(kepGilir.pop(), true);
+    kepTimer = setTimeout(kepLangkah, KEP_MS);
 }
 
 function paparKeputusan() {
     if (!bekasKeputusan) return;
+    if (kepTimer) { clearTimeout(kepTimer); kepTimer = null; }
     bekasKeputusan.textContent = "";
-    if (!dataKeputusan.length) {
+    const siap = dataKeputusan.filter(function (d) { return d.johan; });
+    const belum = dataKeputusan.filter(function (d) { return !d.johan; }).map(function (d) { return d.acara; });
+    if (!siap.length) {
+        kepSlaid = []; kepKini = null; kepGilir = []; kepMasa = 0;
         const p = document.createElement("p");
         p.className = "kep-kosong";
         p.textContent = "Keputusan akan dipaparkan di sini sebaik sahaja setiap acara tamat.";
         bekasKeputusan.appendChild(p);
         return;
     }
-    const label = [["johan", "Johan"], ["naib", "Naib Johan"], ["ketiga", "Tempat Ketiga"], ["keempat", "Tempat Keempat"]];
-    dataKeputusan.forEach(function (d) {
-        const kad = document.createElement("div");
-        kad.className = "kep-kad";
-        const t = document.createElement("h4");
-        t.textContent = d.acara;
-        kad.appendChild(t);
-        label.forEach(function (l, i) {
-            if (!d[l[0]]) return;
-            const b = document.createElement("div");
-            b.className = "kep-baris kep-" + (i + 1);
-            const no = document.createElement("span");
-            no.className = "kep-no"; no.textContent = String(i + 1);
-            const lb = document.createElement("span");
-            lb.className = "kep-label"; lb.textContent = l[1];
-            const nm = document.createElement("strong");
-            nm.textContent = d[l[0]];
-            b.appendChild(no); b.appendChild(lb); b.appendChild(nm);
-            kad.appendChild(b);
+    kepSlaid = siap.map(function (d) { return { kunci: "a:" + d.acara, d: d }; });
+    if (belum.length) kepSlaid.push({ kunci: "info", info: true, nama: belum });
+    // data dimuat semula: jangan ganggu masa slaid semasa jika ia masih wujud
+    const kini = kepSlaid.filter(function (x) { return x.kunci === kepKini; })[0];
+    if (kini && kepMasa) {
+        const lalu = Math.min(KEP_MS - 500, Date.now() - kepMasa);
+        const ada = {};
+        kepSlaid.forEach(function (x) { ada[x.kunci] = x; });
+        const baki = kepGilir.filter(function (x) { return ada[x.kunci] && x.kunci !== kepKini; }).map(function (x) { return ada[x.kunci]; });
+        kepSlaid.forEach(function (x) {
+            if (x.kunci !== kepKini && !baki.some(function (y) { return y.kunci === x.kunci; }))
+                baki.splice(Math.floor(Math.random() * (baki.length + 1)), 0, x);
         });
-        bekasKeputusan.appendChild(kad);
-    });
+        kepGilir = baki;
+        tunjukSlaid(kini, false, lalu);
+        if (kepSlaid.length > 1) kepTimer = setTimeout(kepLangkah, KEP_MS - lalu);
+        return;
+    }
+    const mula = kepSlaid[Math.floor(Math.random() * kepSlaid.length)];
+    kepGilir = kocok(kepSlaid.filter(function (x) { return x.kunci !== mula.kunci; }));
+    tunjukSlaid(mula, false);
+    if (kepSlaid.length > 1) kepTimer = setTimeout(kepLangkah, KEP_MS);
 }
 
 function muatKeputusan() {
